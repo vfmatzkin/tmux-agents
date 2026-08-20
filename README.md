@@ -25,6 +25,9 @@ down step straight over them so you move window to window.
       0  archive            notes-old
 ```
 
+A session with a single window is printed as one line rather than a header and
+a lone child, since the header would only repeat the row under it.
+
 Paths earn their place or they are not shown. The prefix every row shares moves
 into the prompt, and a directory named after its own session is left blank,
 because the header above it already said that. What is left is the part that
@@ -62,7 +65,7 @@ Inside the picker:
 | right / left | Unfold a window into its panes, or fold it back. With a query typed they move the text cursor instead. |
 | type | Filter. Rows flatten so a window still matches its session name. |
 | `^T` | Show only agents waiting on you |
-| shift-arrows | Move the popup around a 3x3 grid, to uncover what is behind it |
+| shift-arrows | Nudge the popup out of the way, to uncover what is behind it |
 | `enter` | Keep where you landed |
 | `esc` | Go back to the pane you started from |
 
@@ -95,6 +98,7 @@ Set these before the plugin line.
 | `@agents-notify-desktop` | `on` | Desktop notification through `osascript` on macOS. |
 | `@agents-watch-interval` | `3` | Seconds between scans. |
 | `@agents-watch-settle` | `3` | Scans a pane must stay idle before it counts. |
+| `@agents-move-step` | `4` | Columns the popup moves per shift-arrow. Vertical steps are half this, since cells are about twice as tall as wide. |
 | `@agents-status` | `off` | Prepend a git and agent-count segment to `status-right`. |
 | `@agents-command-pattern` | `^[0-9]+(\.[0-9]+)+$` | Which panes count as agents, matched against `pane_current_command`. |
 | `@agents-idle-glyph` | `✳` | Title prefix meaning "waiting on you". |
@@ -153,6 +157,8 @@ still reach from a live pane.
   receives, prefix included, so it has to be a key fzf itself sees.
 - Clearing a query keeps the cursor's row position rather than the row it was
   on. That is how fzf behaves, and the `●` marker is the reliable way back.
+- Moving the popup reopens it, so it does not rescan panes on a move. Pressing
+  shift-arrow repeatedly is safe: keys arriving during the reopen are not lost.
 - Folds reset every time you open the picker, and survive moving the popup.
   Unfolding a window can push the list past the popup height, which scrolls,
   because tmux cannot resize a popup that is already open.

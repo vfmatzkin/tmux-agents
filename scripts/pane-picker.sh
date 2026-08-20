@@ -69,6 +69,7 @@ build_rows() {
 			n++
 			S[n]=$2; WI[n]=$3; WN[n]=$4; PI[n]=$5; NP[n]=$6; P[n]=tilde($8); OK[n]=$9; ST[n]=$10
 			k = $2 SUBSEP $3
+			if (!(k in SEENW)) { SEENW[k] = 1; WCOUNT[$2]++ }
 			if ($10 == "idle") { WAIT[$2]++; WIDLE[k]++ }
 			if ($10 == "busy") WBUSY[k]++
 			if ($7 == 1) { APATH[k] = tilde($8); AOK[k] = $9 }
@@ -96,10 +97,14 @@ build_rows() {
 					cs = S[i]; cw = ""; sidx++
 					tag = WAIT[S[i]] ? sprintf("  %s%d✳%s", Y, WAIT[S[i]], R) : ""
 					wtag = WAIT[S[i]] ? sprintf("  %d waiting", WAIT[S[i]]) : ""
+					# one window means the header would only repeat what the row
+					# below it says, so the two are printed as a single line
+					if (WCOUNT[S[i]] == 1) tag = ""
 					# a session is a header, not a target: up/down skip it, so it
 					# is coloured to recede rather than compete with its windows
-					printf "%s\t%s  %s%-2d%s %s%s%s%s\t%s%s%s\n", \
-						S[i], GAP, D, sidx, R, C, S[i], R, tag, GAP, S[i], wtag
+					if (WCOUNT[S[i]] > 1)
+						printf "%s\t%s  %s%-2d%s %s%s%s%s\t%s%s%s\n", \
+							S[i], GAP, D, sidx, R, C, S[i], R, tag, GAP, S[i], wtag
 				}
 				if (WI[i] != cw) {
 					cw = WI[i]
@@ -118,9 +123,21 @@ build_rows() {
 					pc = AOK[k] ? D : RD
 					wl = junk(WN[i]) ? base(APATH[k]) : WN[i]
 					m = (leaf && S[i] ":" WI[i] == origwin) ? MARK : GAP
-					printf "%s:%s\t%s%s%s%s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
-						S[i], WI[i], m, g, ind, D, WI[i], R, wl, pc, wp, R, \
-						m, S[i], D, WI[i], R, wl, APATH[k], sw, (AOK[k] ? "" : "gone")
+					if (WCOUNT[S[i]] == 1) {
+						# session name carries the row, window name rides along dim
+						lbl = sprintf("%s%s%s  %s%s%s", C, S[i], R, D, wl, R)
+						if (wp != "") {
+							pad = 20 - length(S[i]) - length(wl)
+							if (pad < 1) pad = 1
+							lbl = lbl sprintf("%*s%s%s%s", pad, "", pc, wp, R)
+						}
+						printf "%s:%s\t%s%s%s%s%-2d%s %s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
+							S[i], WI[i], m, g, ind, D, sidx, R, lbl, \
+							m, S[i], D, WI[i], R, wl, APATH[k], sw, (AOK[k] ? "" : "gone")
+					} else
+						printf "%s:%s\t%s%s%s%s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
+							S[i], WI[i], m, g, ind, D, WI[i], R, wl, pc, wp, R, \
+							m, S[i], D, WI[i], R, wl, APATH[k], sw, (AOK[k] ? "" : "gone")
 				}
 				if (NP[i] > 1 && index(expanded, " " S[i] ":" WI[i] " ") > 0) {
 					g = (ST[i] == "idle") ? Y "✳ " R : (ST[i] == "busy") ? D "◐ " R : "  "
@@ -258,19 +275,31 @@ trap 'rm -rf "$tmp"' EXIT
 rowsfile=$tmp/rows resultfile=$tmp/result expandfile=$tmp/expanded pfxfile=$tmp/prefix
 : >"$expandfile"   # every window starts folded
 
-# popup position on a 3x3 grid: 0 1 2 = left centre right / top middle bottom
-gx=1 gy=1
+# Popup position in terminal cells rather than snapped to a grid, so a press
+# nudges it instead of throwing it across the screen. -1 means "not placed
+# yet", which centres it on the first open. Cells are about twice as tall as
+# they are wide, so a half step vertically covers the same visual distance.
+hstep=$(opt @agents-move-step 4)
+vstep=$((hstep / 2))
+[ "$vstep" -lt 1 ] && vstep=1
+px=-1 py=-1
 anchor=$orig
 query=""
+reuse=0
 
 while true; do
-	build_rows "$orig" "$expandfile" "$pfxfile" >"$rowsfile"
+	# A move reopens the popup, and rescanning every pane in that gap is what
+	# you would feel as lag while nudging it around. The rows cannot have
+	# changed from moving, so reuse them.
+	[ "$reuse" = 1 ] || build_rows "$orig" "$expandfile" "$pfxfile" >"$rowsfile"
+	reuse=0
 
 	read -r cw ch < <(tmux display-message -p -t "$client" '#{client_width} #{client_height}')
 	# size on the tree column only; the flat column shown while typing is wider,
 	# and fzf scrolls it horizontally to keep the match in view
 	read -r rows width < <(awk -F'\t' '
-		{ n++; s = $2; gsub(/\033\[[0-9;]*m/, "", s); if (length(s) > w) w = length(s) }
+		{ n++; s = $2; gsub(/\033\[[0-9;]*m/, "", s); sub(/[[:space:]]+$/, "", s)
+		  if (length(s) > w) w = length(s) }
 		END { print n, w }' "$rowsfile")
 
 	# fzf chrome with --info=inline: prompt line + two header lines, plus two
@@ -288,10 +317,19 @@ while true; do
 	[ "$w" -lt 10 ] && w=10
 	[ "$w" -gt "$cw" ] && w=$cw
 
-	case $gx in 0) x=0 ;; 2) x=R ;; *) x=C ;; esac
-	# -y anchors the bottom row of the popup; keep the bottom row clear of the
-	# status line, and 0 pins it to the top
-	case $gy in 0) y=0 ;; 2) y=$((ch - 1)) ;; *) y=C ;; esac
+	# -x is the left column, -y the BOTTOM row, both zero based against the
+	# client. Keep the bottom clear of the status line.
+	maxx=$((cw - w)); [ "$maxx" -lt 0 ] && maxx=0
+	miny=$h; maxy=$((ch - 1)); [ "$maxy" -lt "$miny" ] && maxy=$miny
+
+	[ "$px" -lt 0 ] && px=$(((cw - w) / 2))
+	[ "$py" -lt 0 ] && py=$(((ch - h) / 2 + h - 1))
+
+	[ "$px" -gt "$maxx" ] && px=$maxx
+	[ "$px" -lt 0 ] && px=0
+	[ "$py" -gt "$maxy" ] && py=$maxy
+	[ "$py" -lt "$miny" ] && py=$miny
+	x=$px y=$py
 
 	# stale result + a popup that refuses to open would loop forever
 	: >"$resultfile"
@@ -303,11 +341,13 @@ while true; do
 		move)
 			anchor=$(cut -f2 "$resultfile")
 			query=$(cut -f3 "$resultfile")
+			reuse=1
+			# clamped on the next pass, once the new size is known
 			case $(cut -f4 "$resultfile") in
-				*-up)    [ $gy -gt 0 ] && gy=$((gy - 1)) ;;
-				*-down)  [ $gy -lt 2 ] && gy=$((gy + 1)) ;;
-				*-left)  [ $gx -gt 0 ] && gx=$((gx - 1)) ;;
-				*-right) [ $gx -lt 2 ] && gx=$((gx + 1)) ;;
+				*-up)    py=$((py - vstep)) ;;
+				*-down)  py=$((py + vstep)) ;;
+				*-left)  px=$((px - hstep)) ;;
+				*-right) px=$((px + hstep)) ;;
 			esac
 			;;
 		cancel)
