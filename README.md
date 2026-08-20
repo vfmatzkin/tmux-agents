@@ -21,12 +21,13 @@ down step straight over them so you move window to window.
   1  web                1✳
   ◐ ▸ 0  dev
 ● ✳   1  storybook          web/packages/ui
-  2  notes
-      0  archive            notes-old
+  2  notes  archive       notes-old
 ```
 
 A session with a single window is printed as one line rather than a header and
-a lone child, since the header would only repeat the row under it.
+a lone child, since the header would only repeat the row under it. That line
+keeps the session indent, because it stands in for a session. `notes` above is
+one of these.
 
 Paths earn their place or they are not shown. The prefix every row shares moves
 into the prompt, and a directory named after its own session is left blank,

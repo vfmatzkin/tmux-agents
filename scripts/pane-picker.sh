@@ -124,15 +124,18 @@ build_rows() {
 					wl = junk(WN[i]) ? base(APATH[k]) : WN[i]
 					m = (leaf && S[i] ":" WI[i] == origwin) ? MARK : GAP
 					if (WCOUNT[S[i]] == 1) {
-						# session name carries the row, window name rides along dim
+						# This row stands in for its whole session, so it sits at the
+						# session indent. The fold marker moves to the end of the
+						# label rather than taking the column that indent needs.
 						lbl = sprintf("%s%s%s  %s%s%s", C, S[i], R, D, wl, R)
+						if (multi) lbl = lbl sprintf(" %s%s%s", D, (open ? "▾" : "▸"), R)
 						if (wp != "") {
 							pad = 20 - length(S[i]) - length(wl)
 							if (pad < 1) pad = 1
 							lbl = lbl sprintf("%*s%s%s%s", pad, "", pc, wp, R)
 						}
-						printf "%s:%s\t%s%s%s%s%-2d%s %s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
-							S[i], WI[i], m, g, ind, D, sidx, R, lbl, \
+						printf "%s:%s\t%s%s%s%-2d%s %s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
+							S[i], WI[i], m, g, D, sidx, R, lbl, \
 							m, S[i], D, WI[i], R, wl, APATH[k], sw, (AOK[k] ? "" : "gone")
 					} else
 						printf "%s:%s\t%s%s%s%s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
