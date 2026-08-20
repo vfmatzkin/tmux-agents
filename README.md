@@ -33,10 +33,10 @@ actually differs.
 `→` unfolds a window into its panes, `←` folds it back:
 
 ```
-  1  web                 1✳
-    ▾ 0  dev                 ~/code/web
-  ◐     0                    ~/code/web
-  ✳     1                    ~/code/web/packages/ui
+  1  web                1✳
+    ▾ 0  dev
+  ◐     0
+  ✳     1                    web/packages/ui
 ```
 
 `✳` waits on you, `◐` is working, `▸` means the window has panes to unfold,
