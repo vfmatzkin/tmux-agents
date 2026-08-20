@@ -25,14 +25,15 @@ SELF=$DIR/$(basename "$0")
 . "$DIR/helpers.sh"
 
 build_rows() {
-	# $1 = origin target, $2 = file listing expanded "session:window" keys
+	# $1 = origin target, $2 = file listing expanded "session:window" keys,
+	# $3 = file to write the elided common path prefix into
 	local expanded=""
 	[ -n "${2:-}" ] && [ -f "$2" ] && expanded=$(tr '\n' ' ' <"$2")
 
 	"$DIR/agent-scan.sh" \
 		| awk -F'\t' -v orig="$1" -v origwin="${1%.*}" -v home="$HOME" \
 			-v ignore=" $(opt @agents-ignore-sessions '') " \
-			-v expanded=" $expanded " '
+			-v expanded=" $expanded " -v pfile="${3:-/dev/null}" '
 		function base(p,   a, k) { k = split(p, a, "/"); return a[k] == "" ? "/" : a[k] }
 		function tilde(p) {
 			if (p == home) return "~"
@@ -45,6 +46,20 @@ build_rows() {
 			b = "…/" base(p)
 			return length(b) <= n ? b : "…" substr(b, length(b) - n + 2)
 		}
+		# What is worth showing of a path. A directory named after its own
+		# session says nothing the header did not already say, and the prefix
+		# every row shares is printed once in the prompt instead.
+		function relp(p, s, keep,   b) {
+			b = base(p)
+			# a missing directory always stays on screen, in red: that is the
+			# whole tell for a session whose worktree was deleted
+			if (b == s && !keep) return ""
+			if (usepfx) {
+				if (p == prefix) return keep ? p : ""
+				if (index(p, prefix "/") == 1) return substr(p, length(prefix) + 2)
+			}
+			return p
+		}
 		# a window auto-renamed from an agent binary is named after a bare
 		# version, which tells you nothing. Fall back to the directory.
 		function junk(s) { return s ~ /^[0-9]+(\.[0-9]+)+$/ }
@@ -52,24 +67,39 @@ build_rows() {
 		index(ignore, " " $2 " ") { next }
 		{
 			n++
-			S[n]=$2; WI[n]=$3; WN[n]=$4; PI[n]=$5; NP[n]=$6; P[n]=$8; OK[n]=$9; ST[n]=$10
+			S[n]=$2; WI[n]=$3; WN[n]=$4; PI[n]=$5; NP[n]=$6; P[n]=tilde($8); OK[n]=$9; ST[n]=$10
 			k = $2 SUBSEP $3
 			if ($10 == "idle") { WAIT[$2]++; WIDLE[k]++ }
 			if ($10 == "busy") WBUSY[k]++
-			if ($7 == 1) { APATH[k] = $8; AOK[k] = $9 }
+			if ($7 == 1) { APATH[k] = tilde($8); AOK[k] = $9 }
 		}
 		END {
-			B="\033[1m"; D="\033[2m"; R="\033[0m"; Y="\033[33m"; RD="\033[31m"
+			D="\033[2m"; R="\033[0m"; Y="\033[33m"; RD="\033[31m"; C="\033[36m"
 			MARK = sprintf("%s●%s ", "\033[1;33m", R)
 			GAP = "  "
+
+			# the longest directory prefix every path shares, printed once
+			cpn = split(P[1], cp, "/")
+			for (i = 2; i <= n; i++) {
+				m = split(P[i], q, "/"); k = 0
+				while (k < cpn && k < m && cp[k + 1] == q[k + 1]) k++
+				cpn = k
+			}
+			prefix = ""
+			for (j = 1; j <= cpn; j++) prefix = (j == 1 ? cp[j] : prefix "/" cp[j])
+			usepfx = (cpn >= 2 && length(prefix) >= 6)
+			printf("%s", usepfx ? prefix : "") > pfile
+
 			sidx = -1; cs = ""; cw = ""
 			for (i = 1; i <= n; i++) {
 				if (S[i] != cs) {
 					cs = S[i]; cw = ""; sidx++
 					tag = WAIT[S[i]] ? sprintf("  %s%d✳%s", Y, WAIT[S[i]], R) : ""
 					wtag = WAIT[S[i]] ? sprintf("  %d waiting", WAIT[S[i]]) : ""
-					printf "%s\t%s  %s%d%s  %s%s%s%s\t%s%s%s\n", \
-						S[i], GAP, D, sidx, R, B, S[i], R, tag, GAP, S[i], wtag
+					# a session is a header, not a target: up/down skip it, so it
+					# is coloured to recede rather than compete with its windows
+					printf "%s\t%s  %s%-2d%s %s%s%s%s\t%s%s%s\n", \
+						S[i], GAP, D, sidx, R, C, S[i], R, tag, GAP, S[i], wtag
 				}
 				if (WI[i] != cw) {
 					cw = WI[i]
@@ -84,23 +114,23 @@ build_rows() {
 					agg = WIDLE[k] ? "idle" : (WBUSY[k] ? "busy" : "none")
 					g = (!leaf) ? "  " : (agg == "idle") ? Y "✳ " R : (agg == "busy") ? D "◐ " R : "  "
 					sw = (!leaf) ? "" : (agg == "idle") ? "waiting" : (agg == "busy") ? "working" : ""
-					wp = shortp(tilde(APATH[k]), 44)
+					wp = shortp(relp(APATH[k], S[i], !AOK[k]), 46)
 					pc = AOK[k] ? D : RD
 					wl = junk(WN[i]) ? base(APATH[k]) : WN[i]
 					m = (leaf && S[i] ":" WI[i] == origwin) ? MARK : GAP
 					printf "%s:%s\t%s%s%s%s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
 						S[i], WI[i], m, g, ind, D, WI[i], R, wl, pc, wp, R, \
-						m, S[i], D, WI[i], R, wl, wp, sw, (AOK[k] ? "" : "gone")
+						m, S[i], D, WI[i], R, wl, APATH[k], sw, (AOK[k] ? "" : "gone")
 				}
 				if (NP[i] > 1 && index(expanded, " " S[i] ":" WI[i] " ") > 0) {
 					g = (ST[i] == "idle") ? Y "✳ " R : (ST[i] == "busy") ? D "◐ " R : "  "
 					sw = (ST[i] == "idle") ? "waiting" : (ST[i] == "busy") ? "working" : ""
-					pp = shortp(tilde(P[i]), 44)
+					pp = shortp(relp(P[i], S[i], !OK[i]), 46)
 					pc = OK[i] ? D : RD
 					m = (S[i] ":" WI[i] "." PI[i] == orig) ? MARK : GAP
 					printf "%s:%s.%s\t%s%s    %s%-2s%s %-17s%s%s%s\t%s%s  %s%s.%s%s  %s  %s  %s %s\n", \
 						S[i], WI[i], PI[i], m, g, D, PI[i], R, "", pc, pp, R, \
-						m, S[i], D, WI[i], PI[i], R, wl, pp, sw, (OK[i] ? "" : "gone")
+						m, S[i], D, WI[i], PI[i], R, wl, P[i], sw, (OK[i] ? "" : "gone")
 				}
 			}
 		}'
@@ -136,14 +166,18 @@ if [ "${1:-}" = "--toggle" ]; then
 		anchor=$target
 	fi
 
-	build_rows "$orig" "$expandfile" >"$rowsfile"
+	build_rows "$orig" "$expandfile" "$PICKER_PFX" >"$rowsfile"
 
 	pos=$(cut -f1 "$rowsfile" | grep -nxF -- "$anchor" | head -1 | cut -d: -f1)
 	[ -z "$pos" ] && pos=$(cut -f1 "$rowsfile" | grep -nxF -- "${anchor%.*}" | head -1 | cut -d: -f1)
 	: "${pos:=1}"
 
+	prefix=$(cat "$PICKER_PFX" 2>/dev/null || true)
+	prompt=${prefix:+$prefix }
+	prompt="${prompt:-jump }> "
+
 	# reload-sync, so pos lands after the new list is in place rather than racing it
-	printf 'reload-sync(cat %s)+pos(%s)' "$rowsfile" "$pos"
+	printf 'reload-sync(cat %s)+pos(%s)+change-prompt(%s)' "$rowsfile" "$pos" "$prompt"
 	exit 0
 fi
 
@@ -151,10 +185,15 @@ fi
 # Runs inside the popup. Reports back what the user did so the driver can
 # either finish, restore, or reopen the popup somewhere else.
 if [ "${1:-}" = "--pick" ]; then
-	rowsfile=$2 resultfile=$3 anchor=$4 query=$5 expandfile=$6 origin=$7
+	rowsfile=$2 resultfile=$3 anchor=$4 query=$5 expandfile=$6 origin=$7 pfxfile=$8
 
 	# the toggle mode reruns from inside fzf and needs all of this
-	export PICKER_SELF=$SELF PICKER_EXPAND=$expandfile PICKER_ROWS=$rowsfile PICKER_ORIG=$origin
+	export PICKER_SELF=$SELF PICKER_EXPAND=$expandfile PICKER_ROWS=$rowsfile PICKER_ORIG=$origin PICKER_PFX=$pfxfile
+
+	# the prefix every path shares is said once here instead of on every row
+	prefix=$(cat "$pfxfile" 2>/dev/null || true)
+	prompt=${prefix:+$prefix }
+	prompt="${prompt:-jump }> "
 
 	pos=$(cut -f1 "$rowsfile" | grep -nxF -- "$anchor" | head -1 | cut -d: -f1)
 	[ -z "$pos" ] && pos=$(cut -f1 "$rowsfile" | grep -nxF -- "${anchor%.*}" | head -1 | cut -d: -f1)
@@ -178,13 +217,15 @@ if [ "${1:-}" = "--pick" ]; then
 	out=$(fzf \
 		--ansi --reverse --sync --cycle --no-multi --info=inline \
 		--delimiter='\t' --with-nth=$withnth \
-		--prompt='jump > ' \
+		--prompt="$prompt" \
 		--header='● you are here   ✳ waiting   ▸ has panes
 →← unfold  ^T waiting  ⇧arrows move  ⏎ stay  esc back' \
 		--query="$query" --print-query \
 		--expect=shift-up,shift-down,shift-left,shift-right,alt-up,alt-down,alt-left,alt-right \
 		--bind "start:pos($pos)" \
-		--bind 'focus:execute-silent(tmux switch-client -t {1})' \
+		--bind 'focus:execute-silent(case {1} in *:*) tmux switch-client -t {1} ;; esac)' \
+		--bind 'down:down+transform:case {1} in *:*) ;; *) echo down ;; esac' \
+		--bind 'up:up+transform:case {1} in *:*) ;; *) echo up ;; esac' \
 		--bind 'ctrl-t:transform:[ "$FZF_QUERY" = waiting ] && echo clear-query || echo "change-query(waiting)"' \
 		--bind 'right:transform:[ -n "$FZF_QUERY" ] && echo forward-char || "$PICKER_SELF" --toggle {1} expand' \
 		--bind 'left:transform:[ -n "$FZF_QUERY" ] && echo backward-char || "$PICKER_SELF" --toggle {1} collapse' \
@@ -214,7 +255,7 @@ client=$(tmux display-message -p '#{client_tty}')
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-rowsfile=$tmp/rows resultfile=$tmp/result expandfile=$tmp/expanded
+rowsfile=$tmp/rows resultfile=$tmp/result expandfile=$tmp/expanded pfxfile=$tmp/prefix
 : >"$expandfile"   # every window starts folded
 
 # popup position on a 3x3 grid: 0 1 2 = left centre right / top middle bottom
@@ -223,7 +264,7 @@ anchor=$orig
 query=""
 
 while true; do
-	build_rows "$orig" "$expandfile" >"$rowsfile"
+	build_rows "$orig" "$expandfile" "$pfxfile" >"$rowsfile"
 
 	read -r cw ch < <(tmux display-message -p -t "$client" '#{client_width} #{client_height}')
 	# size on the tree column only; the flat column shown while typing is wider,
@@ -255,7 +296,7 @@ while true; do
 	# stale result + a popup that refuses to open would loop forever
 	: >"$resultfile"
 	tmux display-popup -E -c "$client" -w "$w" -h "$h" -x "$x" -y "$y" -T " jump " \
-		"$SELF --pick $rowsfile $resultfile $(printf '%q' "$anchor") $(printf '%q' "$query") $expandfile $(printf '%q' "$orig")" || break
+		"$SELF --pick $rowsfile $resultfile $(printf '%q' "$anchor") $(printf '%q' "$query") $expandfile $(printf '%q' "$orig") $pfxfile" || break
 
 	action=$(cut -f1 "$resultfile" 2>/dev/null)
 	case "$action" in

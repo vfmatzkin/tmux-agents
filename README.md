@@ -10,18 +10,25 @@ its terminal title, tells you when one goes idle, and cleans up the sessions
 left behind when a worktree gets deleted.
 
 It opens folded to the window level, because panes are usually too granular to
-navigate by:
+navigate by. Sessions are headers: they stay visible for grouping, but up and
+down step straight over them so you move window to window.
 
 ```
-  0  api                 2✳
-  ✳   0  server              ~/code/api
-  ✳   1  migrations          ~/code/api
-  1  web                 1✳
-  ◐ ▸ 0  dev                 ~/code/web
-● ✳   1  storybook           ~/code/web
+~/code >
+  0  api                2✳
+  ✳   0  server
+  ✳   1  migrations
+  1  web                1✳
+  ◐ ▸ 0  dev
+● ✳   1  storybook          web/packages/ui
   2  notes
-      0  archive             ~/code/notes-old
+      0  archive            notes-old
 ```
+
+Paths earn their place or they are not shown. The prefix every row shares moves
+into the prompt, and a directory named after its own session is left blank,
+because the header above it already said that. What is left is the part that
+actually differs.
 
 `→` unfolds a window into its panes, `←` folds it back:
 
@@ -34,7 +41,9 @@ navigate by:
 
 `✳` waits on you, `◐` is working, `▸` means the window has panes to unfold,
 `●` is where you were when you opened the picker, and a red path means the
-directory no longer exists. A folded window shows the state of whatever is
+directory no longer exists. A missing directory is always shown, even when it
+would otherwise be blanked as redundant, since that is the whole tell for a
+session whose worktree was deleted. A folded window shows the state of whatever is
 inside it, so nothing waiting is ever hidden behind a fold.
 
 ## Keys
@@ -49,7 +58,7 @@ Inside the picker:
 
 | Key | What it does |
 | --- | --- |
-| up / down | Move, switching the real window underneath as you go |
+| up / down | Move window to window, stepping over the session headers |
 | right / left | Unfold a window into its panes, or fold it back. With a query typed they move the text cursor instead. |
 | type | Filter. Rows flatten so a window still matches its session name. |
 | `^T` | Show only agents waiting on you |
