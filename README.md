@@ -1,0 +1,140 @@
+# tmux-agents
+
+A tmux plugin for people running several coding agents at once.
+
+I kept losing track of which pane was working and which one had finished and
+was waiting for me. `choose-tree` shows you a list, but it cannot preview, and
+it knows nothing about what is running inside a pane. This adds a jump picker
+that switches the real window live as you move, reads each agent's state from
+its terminal title, tells you when one goes idle, and cleans up the sessions
+left behind when a worktree gets deleted.
+
+```
+  0  api                 2✳
+  ✳   0  server              ~/code/api
+  ✳   1  migrations          ~/code/api
+  1  web                 1✳
+      0  dev                 ~/code/web
+  ◐     0                    ~/code/web
+  ✳     1                    ~/code/web/packages/ui
+●     1  storybook           ~/code/web
+  2  notes
+      0  archive             ~/code/notes-old
+```
+
+`✳` waits on you, `◐` is working, `●` is where you were when you opened the
+picker, and a red path means the directory no longer exists.
+
+## Keys
+
+| Key | What it does |
+| --- | --- |
+| `prefix + w` | Jump picker. Arrows preview live, `enter` stays, `esc` returns you. |
+| `prefix + k` | Reap sessions whose directory was deleted. |
+| `prefix + g` | Copy the pane's path, branch, address or title. |
+
+Inside the picker:
+
+| Key | What it does |
+| --- | --- |
+| arrows | Move, switching the real window underneath as you go |
+| type | Filter. Rows flatten so a window still matches its session name. |
+| `^T` | Show only agents waiting on you |
+| shift-arrows | Move the popup around a 3x3 grid, to uncover what is behind it |
+| `enter` | Keep where you landed |
+| `esc` | Go back to the pane you started from |
+
+## Install
+
+With [TPM](https://github.com/tmux-plugins/tpm), add to `~/.tmux.conf`:
+
+```tmux
+set -g @plugin 'vfmatzkin/tmux-agents'
+```
+
+Then `prefix + I`. Without TPM, clone it and add:
+
+```tmux
+run-shell ~/path/to/tmux-agents/agents.tmux
+```
+
+## Options
+
+Set these before the plugin line.
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `@agents-jump-key` | `w` | Picker key. `off` to skip the binding. |
+| `@agents-reap-key` | `k` | Reaper key. `off` to skip. |
+| `@agents-yank-key` | `g` | Copy menu key. `off` to skip. |
+| `@agents-ignore-sessions` | empty | Space separated session names to hide from the picker and the watcher. |
+| `@agents-notify` | `on` | Run the watcher that tells you when an agent goes idle. |
+| `@agents-notify-command` | empty | Shell command that receives the message on stdin. Use it to reach your phone. |
+| `@agents-notify-desktop` | `on` | Desktop notification through `osascript` on macOS. |
+| `@agents-watch-interval` | `3` | Seconds between scans. |
+| `@agents-watch-settle` | `3` | Scans a pane must stay idle before it counts. |
+| `@agents-status` | `off` | Prepend a git and agent-count segment to `status-right`. |
+| `@agents-command-pattern` | `^[0-9]+(\.[0-9]+)+$` | Which panes count as agents, matched against `pane_current_command`. |
+| `@agents-idle-glyph` | `✳` | Title prefix meaning "waiting on you". |
+| `@agents-copy-command` | auto | Clipboard command. Falls back to `pbcopy`, `wl-copy` or `xclip`. |
+
+Example:
+
+```tmux
+set -g @agents-ignore-sessions 'scratch background'
+set -g @agents-notify-command 'ntfy publish mytopic'
+set -g @agents-status on
+set -g @plugin 'vfmatzkin/tmux-agents'
+```
+
+## How it decides a pane is an agent
+
+Claude Code execs a version-named binary, so `pane_current_command` on one of
+its panes is a bare version like `2.1.233`. That is the default detection rule,
+and it is more reliable than matching on a process name. State then comes from
+the terminal title, which starts with `✳` while the agent waits on you and with
+an animated glyph while it works.
+
+For a different agent CLI, point `@agents-command-pattern` at whatever its
+panes report and set `@agents-idle-glyph` to whatever its title uses. Check
+what yours looks like with:
+
+```sh
+tmux list-panes -a -F '#{pane_current_command}  #{pane_title}'
+```
+
+All of this lives in `scripts/agent-scan.sh`, which is the only file that
+classifies panes. Everything else reads its output.
+
+## The reaper
+
+Deleting a git worktree does not delete the tmux session that lived in it, and
+a session restorer like tmux-resurrect will faithfully bring the corpse back on
+every restart. `prefix + k` lists sessions where every pane's directory is
+missing, lets you pick with `tab`, and kills only what you selected. Sessions
+with any surviving pane are reported but never offered, and neither is the
+session you are attached to. It then runs `git worktree prune` in repos it can
+still reach from a live pane.
+
+## Requirements
+
+- tmux with `display-popup`. Developed and tested on 3.6a.
+- fzf. Tested on 0.71. On fzf older than 0.70 the picker still works, but the
+  rows do not flatten while you type, because that needs `change-with-nth`.
+- git, for the branch and worktree parts.
+
+## Notes
+
+- The picker reopens itself to move, because tmux ignores `-x`, `-y`, `-w` and
+  `-h` on a popup that is already open. Your query and selection carry over.
+- The move key cannot be the tmux prefix. tmux hands a popup every key it
+  receives, prefix included, so it has to be a key fzf itself sees.
+- Clearing a query keeps the cursor's row position rather than the row it was
+  on. That is how fzf behaves, and the `●` marker is the reliable way back.
+- The watcher skips the pane you are currently looking at, and seeds panes that
+  are already idle at startup, so launching it does not announce everything at
+  once.
+
+## License
+
+MIT
