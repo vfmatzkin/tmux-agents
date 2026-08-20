@@ -41,7 +41,12 @@ if [ "$(opt @agents-status off)" = on ]; then
 		*status-context.sh*) ;; # already installed, keep reloads idempotent
 		*)
 			tmux set -g status-right "#($SCRIPTS/status-context.sh '#{pane_current_path}')  $current"
-			[ "$(tmux show -gv status-right-length)" -lt 100 ] 2>/dev/null && tmux set -g status-right-length 100
+			if [ "$(tmux show -gv status-right-length)" -lt 100 ] 2>/dev/null; then
+				tmux set -g status-right-length 100
+			fi
 			;;
 	esac
 fi
+
+# a trailing test that happens to be false must not look like a failed plugin
+exit 0

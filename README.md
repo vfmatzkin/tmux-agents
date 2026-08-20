@@ -9,21 +9,33 @@ that switches the real window live as you move, reads each agent's state from
 its terminal title, tells you when one goes idle, and cleans up the sessions
 left behind when a worktree gets deleted.
 
+It opens folded to the window level, because panes are usually too granular to
+navigate by:
+
 ```
   0  api                 2✳
   ✳   0  server              ~/code/api
   ✳   1  migrations          ~/code/api
   1  web                 1✳
-      0  dev                 ~/code/web
-  ◐     0                    ~/code/web
-  ✳     1                    ~/code/web/packages/ui
-●     1  storybook           ~/code/web
+  ◐ ▸ 0  dev                 ~/code/web
+● ✳   1  storybook           ~/code/web
   2  notes
       0  archive             ~/code/notes-old
 ```
 
-`✳` waits on you, `◐` is working, `●` is where you were when you opened the
-picker, and a red path means the directory no longer exists.
+`→` unfolds a window into its panes, `←` folds it back:
+
+```
+  1  web                 1✳
+    ▾ 0  dev                 ~/code/web
+  ◐     0                    ~/code/web
+  ✳     1                    ~/code/web/packages/ui
+```
+
+`✳` waits on you, `◐` is working, `▸` means the window has panes to unfold,
+`●` is where you were when you opened the picker, and a red path means the
+directory no longer exists. A folded window shows the state of whatever is
+inside it, so nothing waiting is ever hidden behind a fold.
 
 ## Keys
 
@@ -37,7 +49,8 @@ Inside the picker:
 
 | Key | What it does |
 | --- | --- |
-| arrows | Move, switching the real window underneath as you go |
+| up / down | Move, switching the real window underneath as you go |
+| right / left | Unfold a window into its panes, or fold it back. With a query typed they move the text cursor instead. |
 | type | Filter. Rows flatten so a window still matches its session name. |
 | `^T` | Show only agents waiting on you |
 | shift-arrows | Move the popup around a 3x3 grid, to uncover what is behind it |
@@ -131,6 +144,9 @@ still reach from a live pane.
   receives, prefix included, so it has to be a key fzf itself sees.
 - Clearing a query keeps the cursor's row position rather than the row it was
   on. That is how fzf behaves, and the `●` marker is the reliable way back.
+- Folds reset every time you open the picker, and survive moving the popup.
+  Unfolding a window can push the list past the popup height, which scrolls,
+  because tmux cannot resize a popup that is already open.
 - The watcher skips the pane you are currently looking at, and seeds panes that
   are already idle at startup, so launching it does not announce everything at
   once.

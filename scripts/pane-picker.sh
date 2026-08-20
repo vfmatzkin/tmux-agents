@@ -25,9 +25,14 @@ SELF=$DIR/$(basename "$0")
 . "$DIR/helpers.sh"
 
 build_rows() {
+	# $1 = origin target, $2 = file listing expanded "session:window" keys
+	local expanded=""
+	[ -n "${2:-}" ] && [ -f "$2" ] && expanded=$(tr '\n' ' ' <"$2")
+
 	"$DIR/agent-scan.sh" \
 		| awk -F'\t' -v orig="$1" -v origwin="${1%.*}" -v home="$HOME" \
-			-v ignore=" $(opt @agents-ignore-sessions '') " '
+			-v ignore=" $(opt @agents-ignore-sessions '') " \
+			-v expanded=" $expanded " '
 		function base(p,   a, k) { k = split(p, a, "/"); return a[k] == "" ? "/" : a[k] }
 		function tilde(p) {
 			if (p == home) return "~"
@@ -48,8 +53,10 @@ build_rows() {
 		{
 			n++
 			S[n]=$2; WI[n]=$3; WN[n]=$4; PI[n]=$5; NP[n]=$6; P[n]=$8; OK[n]=$9; ST[n]=$10
-			if (ST[n] == "idle") WAIT[$2]++
-			if ($7 == 1) { APATH[$2 SUBSEP $3] = $8; AST[$2 SUBSEP $3] = $10; AOK[$2 SUBSEP $3] = $9 }
+			k = $2 SUBSEP $3
+			if ($10 == "idle") { WAIT[$2]++; WIDLE[k]++ }
+			if ($10 == "busy") WBUSY[k]++
+			if ($7 == 1) { APATH[k] = $8; AOK[k] = $9 }
 		}
 		END {
 			B="\033[1m"; D="\033[2m"; R="\033[0m"; Y="\033[33m"; RD="\033[31m"
@@ -67,22 +74,25 @@ build_rows() {
 				if (WI[i] != cw) {
 					cw = WI[i]
 					k = S[i] SUBSEP WI[i]
-					# the state belongs on the leaf row: a split window wears it on
-					# its panes instead, so it is not shown twice
-					leaf = (NP[i] == 1)
-					g = (!leaf) ? "  " : (AST[k] == "idle") ? Y "✳ " R : (AST[k] == "busy") ? D "◐ " R : "  "
-					sw = (!leaf) ? "" : (AST[k] == "idle") ? "waiting" : (AST[k] == "busy") ? "working" : ""
+					multi = (NP[i] > 1)
+					open = (multi && index(expanded, " " S[i] ":" WI[i] " ") > 0)
+					# ▸ says right will drill in, ▾ says left will fold it back up
+					ind = !multi ? "  " : (open ? D "▾ " R : D "▸ " R)
+					# a folded window is the leaf, so it wears the state of whatever
+					# is inside it and the origin mark for any of its panes
+					leaf = !open
+					agg = WIDLE[k] ? "idle" : (WBUSY[k] ? "busy" : "none")
+					g = (!leaf) ? "  " : (agg == "idle") ? Y "✳ " R : (agg == "busy") ? D "◐ " R : "  "
+					sw = (!leaf) ? "" : (agg == "idle") ? "waiting" : (agg == "busy") ? "working" : ""
 					wp = shortp(tilde(APATH[k]), 44)
 					pc = AOK[k] ? D : RD
 					wl = junk(WN[i]) ? base(APATH[k]) : WN[i]
-					# only the leaf row for the origin gets the mark, so a single-pane
-					# window wears it here and a split one wears it on the pane row
 					m = (leaf && S[i] ":" WI[i] == origwin) ? MARK : GAP
-					printf "%s:%s\t%s%s  %s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
-						S[i], WI[i], m, g, D, WI[i], R, wl, pc, wp, R, \
+					printf "%s:%s\t%s%s%s%s%-2s%s %-18s %s%s%s\t%s%s  %s%s%s  %s  %s  %s %s\n", \
+						S[i], WI[i], m, g, ind, D, WI[i], R, wl, pc, wp, R, \
 						m, S[i], D, WI[i], R, wl, wp, sw, (AOK[k] ? "" : "gone")
 				}
-				if (NP[i] > 1) {
+				if (NP[i] > 1 && index(expanded, " " S[i] ":" WI[i] " ") > 0) {
 					g = (ST[i] == "idle") ? Y "✳ " R : (ST[i] == "busy") ? D "◐ " R : "  "
 					sw = (ST[i] == "idle") ? "waiting" : (ST[i] == "busy") ? "working" : ""
 					pp = shortp(tilde(P[i]), 44)
@@ -96,11 +106,55 @@ build_rows() {
 		}'
 }
 
+# --------------------------------------------------------------- toggle mode
+# Called from the right/left bindings inside fzf. Folds or unfolds the window
+# under the cursor, rewrites the rows file, and prints the fzf actions that
+# swap the list in and put the cursor back where it was. Everything it needs
+# beyond the target comes from the environment fzf inherited.
+if [ "${1:-}" = "--toggle" ]; then
+	target=${2:-} dir=${3:-expand}
+	expandfile=$PICKER_EXPAND rowsfile=$PICKER_ROWS orig=$PICKER_ORIG
+
+	case $target in
+		*.*) key=${target%.*} ;;   # a pane row folds its parent window
+		*:*) key=$target ;;        # a window row
+		*)   key="" ;;             # a session row has nothing to fold
+	esac
+
+	if [ -n "$key" ]; then
+		current=$(grep -vxF -- "$key" "$expandfile" 2>/dev/null || true)
+		if [ "$dir" = expand ]; then
+			printf '%s\n' "$current" | grep -v '^$' >"$expandfile.tmp" 2>/dev/null || true
+			printf '%s\n' "$key" >>"$expandfile.tmp"
+			anchor=$target
+		else
+			printf '%s\n' "$current" | grep -v '^$' >"$expandfile.tmp" 2>/dev/null || true
+			anchor=$key
+		fi
+		mv "$expandfile.tmp" "$expandfile"
+	else
+		anchor=$target
+	fi
+
+	build_rows "$orig" "$expandfile" >"$rowsfile"
+
+	pos=$(cut -f1 "$rowsfile" | grep -nxF -- "$anchor" | head -1 | cut -d: -f1)
+	[ -z "$pos" ] && pos=$(cut -f1 "$rowsfile" | grep -nxF -- "${anchor%.*}" | head -1 | cut -d: -f1)
+	: "${pos:=1}"
+
+	# reload-sync, so pos lands after the new list is in place rather than racing it
+	printf 'reload-sync(cat %s)+pos(%s)' "$rowsfile" "$pos"
+	exit 0
+fi
+
 # ---------------------------------------------------------------- picker mode
 # Runs inside the popup. Reports back what the user did so the driver can
 # either finish, restore, or reopen the popup somewhere else.
 if [ "${1:-}" = "--pick" ]; then
-	rowsfile=$2 resultfile=$3 anchor=$4 query=$5
+	rowsfile=$2 resultfile=$3 anchor=$4 query=$5 expandfile=$6 origin=$7
+
+	# the toggle mode reruns from inside fzf and needs all of this
+	export PICKER_SELF=$SELF PICKER_EXPAND=$expandfile PICKER_ROWS=$rowsfile PICKER_ORIG=$origin
 
 	pos=$(cut -f1 "$rowsfile" | grep -nxF -- "$anchor" | head -1 | cut -d: -f1)
 	[ -z "$pos" ] && pos=$(cut -f1 "$rowsfile" | grep -nxF -- "${anchor%.*}" | head -1 | cut -d: -f1)
@@ -125,13 +179,15 @@ if [ "${1:-}" = "--pick" ]; then
 		--ansi --reverse --sync --cycle --no-multi --info=inline \
 		--delimiter='\t' --with-nth=$withnth \
 		--prompt='jump > ' \
-		--header='● where you were    ✳ waiting on you
-^T only waiting   ⇧arrows move   ⏎ stay   esc back' \
+		--header='● you are here   ✳ waiting   ▸ has panes
+→← unfold  ^T waiting  ⇧arrows move  ⏎ stay  esc back' \
 		--query="$query" --print-query \
 		--expect=shift-up,shift-down,shift-left,shift-right,alt-up,alt-down,alt-left,alt-right \
 		--bind "start:pos($pos)" \
 		--bind 'focus:execute-silent(tmux switch-client -t {1})' \
 		--bind 'ctrl-t:transform:[ "$FZF_QUERY" = waiting ] && echo clear-query || echo "change-query(waiting)"' \
+		--bind 'right:transform:[ -n "$FZF_QUERY" ] && echo forward-char || "$PICKER_SELF" --toggle {1} expand' \
+		--bind 'left:transform:[ -n "$FZF_QUERY" ] && echo backward-char || "$PICKER_SELF" --toggle {1} collapse' \
 		"$@" \
 		< "$rowsfile")
 	rc=$?
@@ -158,7 +214,8 @@ client=$(tmux display-message -p '#{client_tty}')
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-rowsfile=$tmp/rows resultfile=$tmp/result
+rowsfile=$tmp/rows resultfile=$tmp/result expandfile=$tmp/expanded
+: >"$expandfile"   # every window starts folded
 
 # popup position on a 3x3 grid: 0 1 2 = left centre right / top middle bottom
 gx=1 gy=1
@@ -166,7 +223,7 @@ anchor=$orig
 query=""
 
 while true; do
-	build_rows "$orig" >"$rowsfile"
+	build_rows "$orig" "$expandfile" >"$rowsfile"
 
 	read -r cw ch < <(tmux display-message -p -t "$client" '#{client_width} #{client_height}')
 	# size on the tree column only; the flat column shown while typing is wider,
@@ -185,7 +242,7 @@ while true; do
 	[ "$h" -gt "$ch" ] && h=$ch
 
 	w=$((width + 6))
-	[ "$w" -lt 56 ] && w=56 # else the header ellipsises on a short list
+	[ "$w" -lt 58 ] && w=58 # else the header ellipsises on a short list
 	[ "$w" -gt $((cw - 4)) ] && w=$((cw - 4))
 	[ "$w" -lt 10 ] && w=10
 	[ "$w" -gt "$cw" ] && w=$cw
@@ -198,7 +255,7 @@ while true; do
 	# stale result + a popup that refuses to open would loop forever
 	: >"$resultfile"
 	tmux display-popup -E -c "$client" -w "$w" -h "$h" -x "$x" -y "$y" -T " jump " \
-		"$SELF --pick $rowsfile $resultfile $(printf '%q' "$anchor") $(printf '%q' "$query")" || break
+		"$SELF --pick $rowsfile $resultfile $(printf '%q' "$anchor") $(printf '%q' "$query") $expandfile $(printf '%q' "$orig")" || break
 
 	action=$(cut -f1 "$resultfile" 2>/dev/null)
 	case "$action" in
